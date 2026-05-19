@@ -1,39 +1,25 @@
 syntax = "proto3";
 
-package patient;
+package hospital.patient;
 
 service PatientService {
-  rpc GetPatient (PatientRequest) returns (PatientResponse);
-  rpc GetPatients (Empty) returns (PatientsResponse);
   rpc CreatePatient (CreatePatientRequest) returns (PatientResponse);
-  rpc DeletePatient (PatientRequest) returns (DeleteResponse);
-}
-
-message Empty {}
-
-message Patient {
-  string id = 1;
-  string name = 2;
-  int32 age = 3;
-}
-
-message PatientRequest {
-  string id = 1;
+  rpc GetPatient (GetPatientRequest) returns (PatientResponse);
 }
 
 message CreatePatientRequest {
   string name = 1;
-  int32 age = 2;
+  string age = 2;
+  string disease = 3;
+}
+
+message GetPatientRequest {
+  string id = 1;
 }
 
 message PatientResponse {
-  Patient patient = 1;
-}
-
-message PatientsResponse {
-  repeated Patient patients = 1;
-}
-
-message DeleteResponse {
-  string message = 1;
+  string id = 1;
+  string name = 2;
+  string age = 3;
+  string disease = 4;
 }

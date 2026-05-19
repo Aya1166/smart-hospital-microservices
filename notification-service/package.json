@@ -1,17 +1,11 @@
 {
   "name": "notification-service",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "main": "worker.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node worker.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "commonjs",
   "dependencies": {
-    "express": "^5.2.1",
     "kafkajs": "^2.2.4"
   }
 }

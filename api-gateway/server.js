@@ -1,122 +1,73 @@
 const express = require('express');
-const cors = require('cors');
-const fs = require('fs');
-
+const { ApolloServer } = require('apollo-server-express');
 const grpc = require('@grpc/grpc-js');
 const protoLoader = require('@grpc/proto-loader');
+const path = require('path');
 
-const { ApolloServer } = require('@apollo/server');
-const { expressMiddleware } =
-  require('@as-integrations/express4');
+const app = express();
+app.use(express.json());
 
-const resolvers = require('./resolvers');
+// Load Unified gRPC Proto Definition
+const protoPath = path.join(__dirname, '../proto/hospital.proto');
 
-const typeDefs = fs.readFileSync('./schema.gql', 'utf8');
+const packageDefinition = protoLoader.loadSync(protoPath, { 
+  keepCase: true, 
+  longs: String, 
+  enums: String, 
+  defaults: true, 
+  oneofs: true 
+});
 
-const packageDefinition = protoLoader.loadSync(
-  './proto/patient.proto'
-);
+// Load the core hospital package definition
+const hospitalProto = grpc.loadPackageDefinition(packageDefinition).hospital;
 
-const patientProto =
-  grpc.loadPackageDefinition(packageDefinition).patient;
+// Instantiate gRPC Clients connecting to your active services
+const patientClient = new hospitalProto.PatientService('localhost:50051', grpc.credentials.createInsecure());
+const appointmentClient = new hospitalProto.AppointmentService('localhost:50052', grpc.credentials.createInsecure());
 
-const grpcClient = new patientProto.PatientService(
-  'localhost:50051',
-  grpc.credentials.createInsecure()
-);
+// --- REST ENDPOINTS ---
+app.post('/api/patients', (req, res) => {
+  const { name, age, disease } = req.body;
+  patientClient.CreatePatient({ name, age, disease }, (err, response) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.status(201).json(response);
+  });
+});
+
+app.get('/api/patients/:id', (req, res) => {
+  patientClient.GetPatient({ id: req.params.id }, (err, response) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(response);
+  });
+});
+
+app.post('/api/appointments', (req, res) => {
+  const { patientId, doctor, date } = req.body;
+  appointmentClient.CreateAppointment({ patient_id: patientId, doctor, date }, (err, response) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.status(201).json({
+      id: response.id,
+      patientId: response.patient_id,
+      doctor: response.doctor,
+      date: response.date
+    });
+  });
+});
+
+// --- GRAPHQL SERVER SETUP ---
+const typeDefs = require('fs').readFileSync(path.join(__dirname, 'schema.graphql'), 'utf8');
+const resolvers = require('./resolvers')(patientClient, appointmentClient);
 
 async function startServer() {
+  const server = new ApolloServer({ typeDefs, resolvers });
+  await server.start();
+  server.applyMiddleware({ app });
 
-  const app = express();
-
-  app.use(cors());
-  app.use(express.json());
-
-  // ---------------- GRAPHQL ----------------
-
-  const apolloServer = new ApolloServer({
-    typeDefs,
-    resolvers
+  const PORT = 4000;
+  app.listen(PORT, () => {
+    console.log(`🚀 API Gateway running! REST/JSON API at http://localhost:${PORT}`);
+    console.log(`🚀 GraphQL Playground ready at http://localhost:${PORT}${server.graphqlPath}`);
   });
-
-  await apolloServer.start();
-
-  app.use('/graphql', expressMiddleware(apolloServer));
-  // ---------------- REST ----------------
-
-  app.get('/patients', (req, res) => {
-
-    grpcClient.GetPatients({}, (err, response) => {
-
-      if (err) {
-        res.status(500).send(err);
-      } else {
-        res.json(response.patients);
-      }
-
-    });
-
-  });
-
-  app.get('/patients/:id', (req, res) => {
-
-    grpcClient.GetPatient(
-      { id: req.params.id },
-      (err, response) => {
-
-        if (err) {
-          res.status(500).send(err);
-        } else {
-          res.json(response.patient);
-        }
-
-      }
-    );
-
-  });
-
-  app.post('/patients', (req, res) => {
-
-    grpcClient.CreatePatient(
-      req.body,
-      (err, response) => {
-
-        if (err) {
-          res.status(500).send(err);
-        } else {
-          res.json(response.patient);
-        }
-
-      }
-    );
-
-  });
-
-  app.delete('/patients/:id', (req, res) => {
-
-    grpcClient.DeletePatient(
-      { id: req.params.id },
-      (err, response) => {
-
-        if (err) {
-          res.status(500).send(err);
-        } else {
-          res.json(response);
-        }
-
-      }
-    );
-
-  });
-
-  // ---------------- START ----------------
-
-  app.listen(3000, () => {
-    console.log(
-      'API Gateway running on http://localhost:3000'
-    );
-  });
-
 }
 
-startServer();
+startServer().catch(err => console.error("Failed to start API Gateway:", err));

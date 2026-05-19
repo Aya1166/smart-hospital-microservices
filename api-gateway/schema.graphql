@@ -1,0 +1,23 @@
+type Patient {
+  id: ID!
+  name: String!
+  age: String!
+  disease: String!
+}
+
+type Appointment {
+  id: ID!
+  patientId: String!
+  doctor: String!
+  date: String!
+}
+
+type Query {
+  getPatient(id: ID!): Patient
+  getPatientAppointments(patientId: ID!): [Appointment]
+}
+
+type Mutation {
+  createPatient(name: String!, age: String!, disease: String!): Patient
+  createAppointment(patientId: ID!, doctor: String!, date: String!): Appointment
+}

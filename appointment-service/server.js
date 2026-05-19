@@ -1,146 +1,77 @@
 const grpc = require('@grpc/grpc-js');
 const protoLoader = require('@grpc/proto-loader');
-const sqlite3 = require('sqlite3').verbose();
+const path = require('path');
+const db = require('./db/database'); 
+const { connectProducer, sendAppointmentEvent } = require('./kafka');
 
-const { Kafka } = require('kafkajs');
+const protoPath = path.join(__dirname, '../proto/hospital.proto');
 
-// ---------------- KAFKA ----------------
-
-const kafka = new Kafka({
-  clientId: 'appointment-service',
-  brokers: ['localhost:9092']
+const packageDefinition = protoLoader.loadSync(protoPath, { 
+  keepCase: true, 
+  longs: String, 
+  enums: String, 
+  defaults: true, 
+  oneofs: true 
 });
 
-const producer = kafka.producer();
+// 1. Load the package definitions
+const loadedProto = grpc.loadPackageDefinition(packageDefinition);
 
-// ---------------- DATABASE ----------------
+// 2. SAFE EXTRACTION: This automatically checks if the service is directly on the root object 
+// or nested under the 'hospital' package namespace.
+let appointmentServiceDefinition;
 
-const db = new sqlite3.Database('./appointments.db');
+if (loadedProto.hospital && loadedProto.hospital.AppointmentService) {
+  appointmentServiceDefinition = loadedProto.hospital.AppointmentService.service;
+} else if (loadedProto.AppointmentService) {
+  appointmentServiceDefinition = loadedProto.AppointmentService.service;
+} else {
+  // Debug output so you can see exactly what services are available in your proto file
+  console.error("❌ ERROR: Could not find AppointmentService in hospital.proto.");
+  console.error("Available keys in your proto object are:", Object.keys(loadedProto.hospital || loadedProto));
+  process.exit(1);
+}
 
-db.run(`
-  CREATE TABLE IF NOT EXISTS appointments (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    patientName TEXT,
-    doctorName TEXT,
-    date TEXT
-  )
-`);
+async function startServer() {
+  await connectProducer();
 
-// ---------------- PROTO ----------------
+  const server = new grpc.Server();
 
-const packageDefinition = protoLoader.loadSync(
-  './proto/appointment.proto'
-);
+  // 3. Register service using the dynamically verified definition
+  server.addService(appointmentServiceDefinition, {
+    CreateAppointment: (call, callback) => {
+      const { patient_id, doctor, date } = call.request;
+      const id = Date.now().toString();
 
-const appointmentProto =
-  grpc.loadPackageDefinition(packageDefinition).appointment;
+      const query = `INSERT INTO appointments (id, patient_id, doctor, date) VALUES (?, ?, ?, ?)`;
+      db.run(query, [id, patient_id, doctor, date], async function (err) {
+        if (err) return callback({ code: grpc.status.INTERNAL, details: err.message });
 
-// ---------------- SERVICE ----------------
+        const createdPayload = { id, patient_id, doctor, date };
 
-const appointmentService = {
+        await sendAppointmentEvent('appointment-notifications', {
+          eventType: 'APPOINTMENT_CREATED',
+          ...createdPayload
+        });
 
-  GetAppointments: (call, callback) => {
+        callback(null, createdPayload);
+      });
+    },
+    GetAppointmentsByPatient: (call, callback) => {
+      const { patient_id } = call.request;
+      const query = `SELECT * FROM appointments WHERE patient_id = ?`;
 
-    db.all(
-      "SELECT * FROM appointments",
-      [],
-      (err, rows) => {
+      db.all(query, [patient_id], (err, rows) => {
+        if (err) return callback({ code: grpc.status.INTERNAL, details: err.message });
+        callback(null, { appointments: rows || [] });
+      });
+    }
+  });
 
-        if (err) {
-          callback(err);
-        } else {
-          callback(null, {
-            appointments: rows
-          });
-        }
+  server.bindAsync('0.0.0.0:50052', grpc.ServerCredentials.createInsecure(), (err, port) => {
+    if (err) return console.error(err);
+    console.log(`📅 Appointment Microservice listening on port ${port} (gRPC)`);
+  });
+}
 
-      }
-    );
-
-  },
-
-  CreateAppointment: async (call, callback) => {
-
-    const {
-      patientName,
-      doctorName,
-      date
-    } = call.request;
-
-    db.run(
-      `
-      INSERT INTO appointments(
-        patientName,
-        doctorName,
-        date
-      )
-      VALUES (?, ?, ?)
-      `,
-      [patientName, doctorName, date],
-
-      async function(err) {
-
-        if (err) {
-
-          callback(err);
-
-        } else {
-
-          // ---------------- KAFKA EVENT ----------------
-
-          await producer.connect();
-
-          await producer.send({
-            topic: 'appointment-created',
-            messages: [
-              {
-                value: JSON.stringify({
-                  id: this.lastID,
-                  patientName,
-                  doctorName,
-                  date
-                })
-              }
-            ]
-          });
-
-          console.log('Kafka event sent');
-
-          callback(null, {
-            appointment: {
-              id: this.lastID.toString(),
-              patientName,
-              doctorName,
-              date
-            }
-          });
-
-        }
-
-      }
-    );
-
-  }
-
-};
-
-// ---------------- SERVER ----------------
-
-const server = new grpc.Server();
-
-server.addService(
-  appointmentProto.AppointmentService.service,
-  appointmentService
-);
-
-server.bindAsync(
-  '0.0.0.0:50052',
-  grpc.ServerCredentials.createInsecure(),
-  () => {
-
-    console.log(
-      'Appointment gRPC service running on port 50052'
-    );
-
-  }
-);
+startServer().catch(err => console.error("Server execution initialization blocked:", err));

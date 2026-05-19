@@ -1,110 +1,65 @@
 const grpc = require('@grpc/grpc-js');
 const protoLoader = require('@grpc/proto-loader');
-const db = require('./db/database');
+const path = require('path');
+const { initDB } = require('./db/database');
 
-const packageDefinition = protoLoader.loadSync(
-  './proto/patient.proto'
-);
+// 1. Point directly to your global hospital.proto file
+const protoPath = path.join(__dirname, '../proto/hospital.proto');
 
-const patientProto = grpc.loadPackageDefinition(packageDefinition).patient;
+const packageDefinition = protoLoader.loadSync(protoPath, { 
+  keepCase: true, 
+  longs: String, 
+  enums: String, 
+  defaults: true, 
+  oneofs: true 
+});
 
-const patientService = {
+// 2. Load the package using the correct namespace (.hospital)
+const hospitalProto = grpc.loadPackageDefinition(packageDefinition).hospital;
 
-  GetPatients: (call, callback) => {
+async function startgRPCServer() {
+  const db = await initDB();
+  const server = new grpc.Server();
 
-    db.all("SELECT * FROM patients", [], (err, rows) => {
-
-      if (err) {
-        callback(err);
-      } else {
-        callback(null, { patients: rows });
+  // 3. Access PatientService from the hospital namespace
+  server.addService(hospitalProto.PatientService.service, {
+    CreatePatient: async (call, callback) => {
+      try {
+        const { name, age, disease } = call.request;
+        const newPatient = {
+          id: Date.now().toString(),
+          name,
+          age,
+          disease
+        };
+        await db.patients.insert(newPatient);
+        callback(null, newPatient);
+      } catch (err) {
+        callback({ code: grpc.status.INTERNAL, details: err.message });
       }
-
-    });
-
-  },
-
-  GetPatient: (call, callback) => {
-
-    db.get(
-      "SELECT * FROM patients WHERE id = ?",
-      [call.request.id],
-      (err, row) => {
-
-        if (err) {
-          callback(err);
-        } else {
-          callback(null, { patient: row });
+    },
+    GetPatient: async (call, callback) => {
+      try {
+        const patient = await db.patients.findOne({ selector: { id: call.request.id } }).exec();
+        if (!patient) {
+          return callback({ code: grpc.status.NOT_FOUND, details: "Patient not found" });
         }
-
+        callback(null, {
+          id: patient.id,
+          name: patient.name,
+          age: patient.age,
+          disease: patient.disease
+        });
+      } catch (err) {
+        callback({ code: grpc.status.INTERNAL, details: err.message });
       }
-    );
+    }
+  });
 
-  },
+  server.bindAsync('0.0.0.0:50051', grpc.ServerCredentials.createInsecure(), (err, port) => {
+    if (err) return console.error(err);
+    console.log(` Hospital Patient Microservice listening on port ${port} (gRPC)`);
+  });
+}
 
-  CreatePatient: (call, callback) => {
-
-    const { name, age } = call.request;
-
-    db.run(
-      "INSERT INTO patients(name, age) VALUES(?, ?)",
-      [name, age],
-      function(err) {
-
-        if (err) {
-          callback(err);
-        } else {
-
-          callback(null, {
-            patient: {
-              id: this.lastID.toString(),
-              name,
-              age
-            }
-          });
-
-        }
-
-      }
-    );
-
-  },
-
-  DeletePatient: (call, callback) => {
-
-    db.run(
-      "DELETE FROM patients WHERE id = ?",
-      [call.request.id],
-      function(err) {
-
-        if (err) {
-          callback(err);
-        } else {
-
-          callback(null, {
-            message: "Patient deleted"
-          });
-
-        }
-
-      }
-    );
-
-  }
-
-};
-
-const server = new grpc.Server();
-
-server.addService(
-  patientProto.PatientService.service,
-  patientService
-);
-
-server.bindAsync(
-  '0.0.0.0:50051',
-  grpc.ServerCredentials.createInsecure(),
-  () => {
-    console.log("Patient gRPC service running on port 50051");
-  }
-);
+startgRPCServer().catch(err => console.error(err));

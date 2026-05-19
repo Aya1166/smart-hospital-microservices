@@ -1,97 +1,19 @@
-const grpc = require('@grpc/grpc-js');
-const protoLoader = require('@grpc/proto-loader');
+const sqlite3 = require('sqlite3').verbose();
+const path = require('path');
 
-const packageDefinition = protoLoader.loadSync(
-  './proto/patient.proto'
-);
+const db = new sqlite3.Database(path.join(__dirname, 'appointments.db'), (err) => {
+  if (err) console.error('Database connection failed', err);
+});
 
-const patientProto =
-  grpc.loadPackageDefinition(packageDefinition).patient;
+db.serialize(() => {
+  db.run(`
+    CREATE TABLE IF NOT EXISTS appointments (
+      id TEXT PRIMARY KEY,
+      patient_id TEXT,
+      doctor TEXT,
+      date TEXT
+    )
+  `);
+});
 
-const grpcClient = new patientProto.PatientService(
-  'localhost:50051',
-  grpc.credentials.createInsecure()
-);
-
-const resolvers = {
-
-  Query: {
-
-    patients: async () => {
-
-      return new Promise((resolve, reject) => {
-
-        grpcClient.GetPatients({}, (err, response) => {
-
-          if (err) reject(err);
-          else resolve(response.patients);
-
-        });
-
-      });
-
-    },
-
-    patient: async (_, args) => {
-
-      return new Promise((resolve, reject) => {
-
-        grpcClient.GetPatient(
-          { id: args.id },
-          (err, response) => {
-
-            if (err) reject(err);
-            else resolve(response.patient);
-
-          }
-        );
-
-      });
-
-    }
-
-  },
-
-  Mutation: {
-
-    createPatient: async (_, args) => {
-
-      return new Promise((resolve, reject) => {
-
-        grpcClient.CreatePatient(
-          args,
-          (err, response) => {
-
-            if (err) reject(err);
-            else resolve(response.patient);
-
-          }
-        );
-
-      });
-
-    },
-
-    deletePatient: async (_, args) => {
-
-      return new Promise((resolve, reject) => {
-
-        grpcClient.DeletePatient(
-          { id: args.id },
-          (err, response) => {
-
-            if (err) reject(err);
-            else resolve(response.message);
-
-          }
-        );
-
-      });
-
-    }
-
-  }
-
-};
-
-module.exports = resolvers;
+module.exports = db;

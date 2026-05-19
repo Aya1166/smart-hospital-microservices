@@ -1,19 +1,33 @@
-const sqlite3 = require('sqlite3').verbose();
+const { createRxDatabase, addRxPlugin } = require('rxdb');
+const { getRxStorageMemory } = require('rxdb/plugins/storage-memory');
 
-const db = new sqlite3.Database('./db/patients.db', (err) => {
-  if (err) {
-    console.log(err.message);
-  } else {
-    console.log("Patient DB connected");
+// Define a valid RxDB Patient Schema
+const PatientSchema = {
+  title: 'patient schema',
+  version: 0,
+  primaryKey: 'id',
+  type: 'object',
+  properties: {
+    id: { type: 'string', maxLength: 100 },
+    name: { type: 'string' },
+    age: { type: 'string' },
+    disease: { type: 'string' }
+  },
+  required: ['id', 'name', 'age', 'disease']
+};
 
-    db.run(`
-      CREATE TABLE IF NOT EXISTS patients (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT,
-        age INTEGER
-      )
-    `);
-  }
-});
+async function initDB() {
+  // Instantiate database with clean modern native memory storage engine
+  const db = await createRxDatabase({
+    name: 'patientdb',
+    storage: getRxStorageMemory()
+  });
 
-module.exports = db;
+  await db.addCollections({
+    patients: { schema: PatientSchema }
+  });
+
+  return db;
+}
+
+module.exports = { initDB };
