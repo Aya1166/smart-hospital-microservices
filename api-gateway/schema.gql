@@ -1,0 +1,20 @@
+type Patient {
+  id: String
+  name: String
+  age: Int
+  disease: String
+}
+
+type Query {
+  patients: [Patient]
+  patient(id: String!): Patient
+}
+
+type Mutation {
+  createPatient(
+    name: String!
+    age: Int!
+  ): Patient
+
+  deletePatient(id: String!): String
+}

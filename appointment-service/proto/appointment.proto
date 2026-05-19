@@ -1,0 +1,37 @@
+syntax = "proto3";
+
+package appointment;
+
+message Appointment {
+  string id = 1;
+  string patientId = 2;
+  string doctor = 3;
+  string date = 4;
+}
+
+message Empty {}
+
+message AppointmentId {
+  string id = 1;
+}
+
+message AppointmentResponse {
+  Appointment appointment = 1;
+}
+
+message AppointmentsResponse {
+  repeated Appointment appointments = 1;
+}
+
+service AppointmentService {
+
+  rpc GetAppointments(Empty)
+    returns (AppointmentsResponse);
+
+  rpc GetAppointment(AppointmentId)
+    returns (AppointmentResponse);
+
+  rpc CreateAppointment(Appointment)
+    returns (AppointmentResponse);
+
+}
